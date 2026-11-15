@@ -1,0 +1,11 @@
+{
+  "name": "bibibobo",
+  "version": "1.0.0",
+  "description": "把一句话变成「哔哔啵啵」的小人说话声：一条锯齿波、两个滤波器，一个字一声。",
+  "type": "module",
+  "main": "bibibobo.js",
+  "exports": "./bibibobo.js",
+  "bin": {"bibibobo": "cli.mjs"},
+  "files": ["bibibobo.js", "cli.mjs", "index.html", "build.mjs"],
+  "license": "MIT"
+}
