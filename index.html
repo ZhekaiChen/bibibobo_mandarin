@@ -33,6 +33,8 @@
     <button id="play">说！</button>
     <button id="save" class="ghost">下载 WAV</button>
   </div>
+  <audio id="player" preload="auto"></audio>
+  <p id="play-error" role="status" hidden></p>
   <canvas id="scope" width="1328" height="240"></canvas>
   <ul>
     <li>同一个字永远是同一声：音高是 <code>音阶[hash(字) % 音阶长度]</code>。</li>
@@ -143,7 +145,8 @@ function toWav(samples, sampleRate = 44100) {
 }
   /* bibibobo:end */
   const $ = (id) => document.getElementById(id);
-  let ctx;
+  const player = $('player');
+  let playbackUrl, playbackId = 0;
   const make = () => synth($('text').value, {voice: $('voice').value, step: +$('step').value});
   function draw(samples) {
     const c = $('scope'), g = c.getContext('2d'), w = c.width, h = c.height;
@@ -153,12 +156,24 @@ function toWav(samples, sampleRate = 44100) {
     g.stroke();
   }
   $('voice').onchange = () => { $('step').value = VOICES[$('voice').value].step; };
-  $('play').onclick = () => {
-    const samples = make(); draw(samples);
-    ctx ??= new (window.AudioContext || window.webkitAudioContext)();
-    if (ctx.state === 'suspended') ctx.resume();
-    const buf = ctx.createBuffer(1, samples.length, 44100); buf.copyToChannel(samples, 0);
-    const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination); src.start();
+  $('play').onclick = async () => {
+    const id = ++playbackId;
+    player.pause(); // 复用同一个播放器，再次点击立即停止上一段。
+    $('play-error').hidden = true;
+    try {
+      const samples = make(); draw(samples);
+      const previousUrl = playbackUrl;
+      playbackUrl = URL.createObjectURL(new Blob([toWav(samples)], {type: 'audio/wav'}));
+      player.src = playbackUrl; // 换源后从头播放，已停止的旧音频可以释放。
+      if (previousUrl) URL.revokeObjectURL(previousUrl);
+      // 在点击事件内直接发起播放，保留手机浏览器要求的用户操作上下文。
+      await player.play();
+    } catch (error) {
+      if (id !== playbackId) return; // 新一次点击中断旧播放时，不显示过期错误。
+      console.error('音频播放失败', error);
+      $('play-error').textContent = '播放失败，请再点一次「说！」，或下载 WAV 收听。';
+      $('play-error').hidden = false;
+    }
   };
   $('save').onclick = () => {
     const samples = make(); draw(samples);
