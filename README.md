@@ -1,5 +1,7 @@
 # 哔哔啵啵 · 声调版（bibibobo_mandarin）
 
+**在线试玩：<https://zhekaichen.github.io/bibibobo_mandarin/>**（自包含单文件，不联网，手机也能开）
+
 基于 [hakihakii/bibibobo](https://github.com/hakihakii/bibibobo) 二次开发：新增**声调驱动**——每个字按真实普通话读音走（五度调值 + 三声/一/不变调 + 轻声 + 句调），口型跟着韵母走。原版是哈希出声，这版是真的在「念」你输入的话。原项目的 MIT 协议和版权申明保留在 LICENSE 中。
 
 # 哔哔啵啵（bibibobo）
