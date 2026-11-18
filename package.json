@@ -1,7 +1,7 @@
 {
-  "name": "bibibobo",
-  "version": "1.0.0",
-  "description": "把一句话变成「哔哔啵啵」的小人说话声：一条锯齿波、两个滤波器，一个字一声。",
+  "name": "bibibobo-mandarin",
+  "version": "1.1.0",
+  "description": "把一句话变成「哔哔啵啵」的小人说话声（声调驱动版）：按真实普通话读音定音高，零依赖，浏览器和 Node 都能用。",
   "type": "module",
   "main": "bibibobo.js",
   "exports": "./bibibobo.js",

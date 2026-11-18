@@ -43,43 +43,69 @@ function bandpass(sampleRate) {
   };
 }
 
-/** 把一声写进 out：音高 m，时长 dur 秒，glide 是结尾滑多少个半音，vowel 选口型。 */
-export function voice(out, sampleRate, t, m, dur, v, glide = 0, vowel = 0) {
+/** 把一声写进 out：音高 m，时长 dur 秒，glide 是结尾滑多少个半音，vowel 选口型。
+ *  contour 是字内音高拐点（MIDI 音高数组，字内线性插值），给了它就按它走，忽略 m 和 glide —— 声调驱动走这条路。
+ *  gainScale 把这声调小（括号里的悄悄话用）。 */
+export function voice(out, sampleRate, t, m, dur, v, glide = 0, vowel = 0, contour = null, gainScale = 1) {
   const osc = saw(sampleRate), f1 = bandpass(sampleRate), f2 = bandpass(sampleRate);
   const [a, b] = VOWELS[vowel % VOWELS.length];
   const start = Math.floor(t * sampleRate), n = Math.floor(dur * sampleRate);
   for (let i = 0; i < n && start + i < out.length; i++) {
-    const x = i / sampleRate;
-    const pitch = mtof(m + glide * (x / dur) + v.chirp * Math.exp(-x * 30)) * (1 + 0.012 * Math.sin(TAU * 6 * x)); // 滑音 + 字头小滑音 + 一点颤音
+    const x = i / sampleRate, u = x / dur;
+    let bend = m + glide * u;
+    if (contour) { // 字内多拐点：一声 [5,5] 平，二声 [3,5] 升，四声 [5,1] 降，三声 [2,1,4] 拐弯
+      const p = u * (contour.length - 1), k = Math.min(contour.length - 2, Math.floor(p));
+      bend = contour[k] + (contour[k + 1] - contour[k]) * (p - k);
+    }
+    const pitch = mtof(bend + v.chirp * Math.exp(-x * 30)) * (1 + 0.012 * Math.sin(TAU * 6 * x)); // 滑音 + 字头小滑音 + 一点颤音
     const s = osc(pitch);
     const env = Math.min(1, x * 200) * Math.min(1, (dur - x) * 40); // 5 毫秒起音，25 毫秒收尾
-    out[start + i] += (f1(s, a * v.formant, 4) + 0.7 * f2(s, b * v.formant, 5)) * env * v.gain;
+    out[start + i] += (f1(s, a * v.formant, 4) + 0.7 * f2(s, b * v.formant, 5)) * env * v.gain * gainScale;
   }
 }
 
 /**
  * 把一句话合成为单声道采样（Float32Array，范围 -1..1）。
- * @param {string} text 要说的话。问号结尾尾音上扬；带感叹号整句升高；省略号结尾整句压低、尾音下滑。
- * @param {{voice?: 'fish'|'lumo'|object, step?: number, sampleRate?: number, gap?: number}} [opts]
+ * @param {string} text 要说的话。问号结尾尾音上扬；带感叹号整句升高；省略号结尾整句压低、尾音下滑；
+ *   ～结尾尾音拖长；句号类标点后停得久，逗号类停得短；括号（）里的内容小声说。
+ * @param {{voice?: 'fish'|'lumo'|object, step?: number, sampleRate?: number, gap?: number, melody?: function}} [opts]
  *   voice 声线；step 每个字间隔多少秒；gap 句子之间停多少秒。
+ *   melody 可选：给一句的字表和语气，返回每声的 {contour?, m?, glide?, dur?, vowel?, gain?}（mandarin.js 的 mandarin() 就是一个，装上即声调驱动）。
  */
 export function synth(text, opts = {}) {
   const v = typeof opts.voice === 'object' ? {...VOICES.fish, ...opts.voice} : VOICES[opts.voice ?? 'fish'];
   const sampleRate = opts.sampleRate ?? 44100, step = opts.step ?? v.step, gap = opts.gap ?? 0.22;
-  // 按标点切成句子，每句各自套一条语气规则
-  const sentences = (text.match(/[^？?！!。.，,、；;…\n]+[？?！!。.，,、；;…]*/g) ?? []).map((s) => ({text: s, tk: syllables(s)})).filter((s) => s.tk.length);
-  const total = sentences.reduce((n, s) => n + s.tk.length * step + gap, 0) + 0.4;
+  // 按标点切成句子，每句各自套一条语气规则；切句时记下每个字是否在括号里
+  const sentences = (text.match(/[^？?！!。.，,、；;…～~\n]+[？?！!。.，,、；;…～~]*/g) ?? []).map((s) => {
+    const tk = [], paren = [];
+    let depth = 0, pos = 0;
+    for (const m of s.matchAll(/[A-Za-z_\/.0-9]+|[\u4e00-\u9fff]/g)) {
+      for (const c of s.slice(pos, m.index)) {
+        if (c === '（' || c === '(') depth++;
+        if (c === '）' || c === ')') depth = Math.max(0, depth - 1);
+      }
+      tk.push(m[0]); paren.push(depth > 0); pos = m.index + m[0].length;
+    }
+    return {text: s, tk, paren};
+  }).filter((s) => s.tk.length);
+  const tail = (s) => s.replace(/[（）()\s]+$/g, ''); // 句尾括号不影响判断语气
+  const after = (s) => /[。！？!?…～~]$/.test(tail(s.text)) ? gap * 1.6 : /[，,、；;:：]$/.test(tail(s.text)) ? gap * 0.5 : gap; // 句号类停久一点，逗号类停短一点
+  const total = sentences.reduce((n, s) => n + s.tk.length * step + after(s) + (/[～~]$/.test(tail(s.text)) ? step : 0), 0) + 0.4;
   const out = new Float32Array(Math.ceil(total * sampleRate));
   let t = 0.02;
-  for (const {text: s, tk} of sentences) {
-    const ask = /[？?]$/.test(s), shout = /[！!]/.test(s), sad = /(……|\.\.\.|…)$/.test(s);
+  for (const {text: s, tk, paren} of sentences) {
+    const ask = /[？?]$/.test(tail(s)), shout = /[！!]/.test(tail(s)), sad = /(……|\.\.\.|…)$/.test(tail(s)), wave = /[～~]$/.test(tail(s));
+    const ms = opts.melody?.(tk, {ask, shout, sad, wave, paren, voice: v, step}); // 声调驱动时，一句的音高一次算好
     tk.forEach((w, i) => {
       const last = i === tk.length - 1;
-      const m = v.scale[hash(w) % v.scale.length] + (shout ? 3 : 0) - (sad ? 3 : 0);
-      const dur = Math.min(step * v.hold, v.maxDur) + (last && (ask || shout || sad) ? 0.1 : 0);
-      voice(out, sampleRate, t + i * step, m, dur, v, last && ask ? 5 : last && sad ? -4 : last ? v.fall : 0, hash(w));
+      const d = ms?.[i] ?? {};
+      const m = d.m ?? (v.scale[hash(w) % v.scale.length] + (shout ? 3 : 0) - (sad ? 3 : 0));
+      let dur = d.dur ?? (Math.min(step * v.hold, v.maxDur) + (last && (ask || shout || sad) ? 0.1 : 0));
+      if (last && wave && d.dur === undefined) dur = dur * 1.6 + 0.08; // ～：尾音拖长
+      const glide = d.glide ?? (last && ask ? 5 : last && sad ? -4 : last ? v.fall : 0);
+      voice(out, sampleRate, t + i * step, m, dur, v, glide, d.vowel ?? hash(w), d.contour ?? null, d.gain ?? (paren[i] ? 0.45 : 1));
     });
-    t += tk.length * step + gap;
+    t += tk.length * step + after({text: s});
   }
   for (let i = 0; i < out.length; i++) out[i] = Math.tanh(out[i] * 2.4); // 软限幅，响一点也不破音
   return out;
